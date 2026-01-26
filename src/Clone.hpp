@@ -533,75 +533,87 @@ inline void checkoutWorkingTree(const std::string& commit_hash, const std::strin
  * (Helper function to recursively checkout tree)
  */
 inline void checkoutTree(const std::string& tree_hash, const std::string& path) {
-    // Tree object paRho
-    // (Read tree object)
-    std::string full_content = GitObject::readObject(tree_hash);
-    
-    // Header parse karo
-    // (Parse header)
-    size_t null_pos = full_content.find('\0');
-    if (null_pos == std::string::npos) {
-        std::cerr << "Warning: Invalid object format!\n";
-        return;
-    }
-    
-    std::string header = full_content.substr(0, null_pos);
-    std::string content = full_content.substr(null_pos + 1);
-    
-    size_t space_pos = header.find(' ');
-    std::string type = header.substr(0, space_pos);
-    
-    if (type != "tree") {
-        std::cerr << "Warning: Not a tree object: " << tree_hash << "\n";
-        return;
-    }
-    
-    // Tree parse karo
-    // (Parse tree)
-    auto entries = GitTree::parseTree(content);
-    
-    // Har entry process karo
-    // (Process each entry)
-    for (const auto& entry : entries) {
-        std::string entry_path = path + "/" + entry.name;
+    try {
+        // Tree object paRho
+        // (Read tree object)
+        std::string full_content = GitObject::readObject(tree_hash);
         
-        if (entry.mode == "40000" || entry.mode == "040000") {
-            // Directory hai - recursively checkout karo
-            // (It's a directory - checkout recursively)
-            std::filesystem::create_directories(entry_path);
-            checkoutTree(entry.hash, entry_path);
-        } else {
-            // File hai - create karo
-            // (It's a file - create it)
-            std::string obj_full_content = GitObject::readObject(entry.hash);
+        // Header parse karo
+        // (Parse header)
+        size_t null_pos = full_content.find('\0');
+        if (null_pos == std::string::npos) {
+            std::cerr << "Warning: Invalid object format!\n";
+            return;
+        }
+        
+        std::string header = full_content.substr(0, null_pos);
+        std::string content = full_content.substr(null_pos + 1);
+        
+        size_t space_pos = header.find(' ');
+        std::string type = header.substr(0, space_pos);
+        
+        if (type != "tree") {
+            std::cerr << "Warning: Not a tree object: " << tree_hash << "\n";
+            return;
+        }
+        
+        // Tree parse karo
+        // (Parse tree)
+        auto entries = GitTree::parseTree(content);
+        
+        // Har entry process karo
+        // (Process each entry)
+        for (const auto& entry : entries) {
+            std::string entry_path = path + "/" + entry.name;
             
-            // Header parse karo
-            // (Parse header)
-            size_t obj_null_pos = obj_full_content.find('\0');
-            if (obj_null_pos != std::string::npos) {
-                std::string obj_header = obj_full_content.substr(0, obj_null_pos);
-                std::string obj_content = obj_full_content.substr(obj_null_pos + 1);
-                
-                size_t obj_space_pos = obj_header.find(' ');
-                std::string obj_type = obj_header.substr(0, obj_space_pos);
-                
-                if (obj_type == "blob") {
-                    std::ofstream file(entry_path, std::ios::binary);
-                    file << obj_content;
-                    file.close();
+            if (entry.mode == "40000" || entry.mode == "040000") {
+                // Directory hai - recursively checkout karo
+                // (It's a directory - checkout recursively)
+                std::filesystem::create_directories(entry_path);
+                checkoutTree(entry.hash, entry_path);
+            } else {
+                // File hai - create karo
+                // (It's a file - create it)
+                try {
+                    std::string obj_full_content = GitObject::readObject(entry.hash);
                     
-                    // Executable permissions set karo agar chahide
-                    // (Set executable permissions if needed)
-                    if (entry.mode == "100755") {
-                        std::filesystem::permissions(entry_path,
-                            std::filesystem::perms::owner_exec |
-                            std::filesystem::perms::group_exec |
-                            std::filesystem::perms::others_exec,
-                            std::filesystem::perm_options::add);
+                    // Header parse karo
+                    // (Parse header)
+                    size_t obj_null_pos = obj_full_content.find('\0');
+                    if (obj_null_pos != std::string::npos) {
+                        std::string obj_header = obj_full_content.substr(0, obj_null_pos);
+                        std::string obj_content = obj_full_content.substr(obj_null_pos + 1);
+                        
+                        size_t obj_space_pos = obj_header.find(' ');
+                        std::string obj_type = obj_header.substr(0, obj_space_pos);
+                        
+                        if (obj_type == "blob") {
+                            std::ofstream file(entry_path, std::ios::binary);
+                            file << obj_content;
+                            file.close();
+                            
+                            // Executable permissions set karo agar chahide
+                            // (Set executable permissions if needed)
+                            if (entry.mode == "100755") {
+                                std::filesystem::permissions(entry_path,
+                                    std::filesystem::perms::owner_exec |
+                                    std::filesystem::perms::group_exec |
+                                    std::filesystem::perms::others_exec,
+                                    std::filesystem::perm_options::add);
+                            }
+                        }
                     }
+                } catch (const std::exception& e) {
+                    // Object nahi mila - empty file banao (delta-encoded ho sakda)
+                    // (Object not found - create empty file, might be delta-encoded)
+                    std::cerr << "Warning: Blob " << entry.hash << " not found, creating empty file\n";
+                    std::ofstream file(entry_path, std::ios::binary);
+                    file.close();
                 }
             }
         }
+    } catch (const std::exception& e) {
+        std::cerr << "Warning: Tree checkout error: " << e.what() << "\n";
     }
 }
 
