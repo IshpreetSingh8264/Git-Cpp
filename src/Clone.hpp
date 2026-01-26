@@ -11,8 +11,12 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <map>
+#include <zlib.h>
+#include "Compression.hpp"
 #include "GitObject.hpp"
 #include "Tree.hpp"
+#include "Repository.hpp"
 
 // ==========================================
 // CLONE KARNE DA SYSTEM - REMOTE REPO LEKE AAO!
@@ -54,7 +58,7 @@ inline std::tuple<std::string, std::string, int, std::string> parseURL(const std
     if (protocol == "https") {
         port = 443;
     } else if (protocol == "http") {
-        port = 9418; // Git protocol port
+        port = 80;
     } else {
         throw std::runtime_error("Unsupported protocol: " + protocol);
     }
@@ -82,8 +86,58 @@ inline std::tuple<std::string, std::string, int, std::string> parseURL(const std
 }
 
 /**
- * HTTP request bhejne da function
- * (Function to send HTTP request)
+ * Pkt-line format parse karne da function
+ * (Function to parse pkt-line format)
+ * 
+ * Git protocol use karda hai pkt-line format
+ * 4 hex digits (length) + data
+ * (Git protocol uses pkt-line format
+ *  4 hex digits (length) + data)
+ */
+inline std::vector<std::string> parsePktLines(const std::string& data) {
+    std::vector<std::string> lines;
+    size_t pos = 0;
+    
+    // Curl raw data denda hai - seedha parse karo
+    // (Curl gives raw data - parse directly)
+    
+    while (pos < data.size()) {
+        // Pehle 4 bytes length honi chahidi (hex format vich)
+        // (First 4 bytes should be length in hex format)
+        if (pos + 4 > data.size()) break;
+        
+        std::string len_str = data.substr(pos, 4);
+        int len = 0;
+        try {
+            len = std::stoi(len_str, nullptr, 16);
+        } catch (...) {
+            break;
+        }
+        
+        if (len == 0) {
+            // Flush packet - section khatam
+            // (Flush packet - section end)
+            pos += 4;
+            continue;
+        }
+        
+        if (len < 4) break;
+        
+        // Data extract karo (4 bytes length include nahi)
+        // (Extract data - 4 bytes length not included)
+        if (pos + len > data.size()) break;
+        
+        std::string line = data.substr(pos + 4, len - 4);
+        lines.push_back(line);
+        pos += len;
+    }
+    
+    return lines;
+}
+
+/**
+ * HTTP request bhejne da function (using curl for HTTPS support)
+ * (Function to send HTTP request using curl for HTTPS support)
  * 
  * Simple HTTP GET request for git-upload-pack
  * (Simple HTTP GET request for git-upload-pack)
@@ -97,100 +151,284 @@ inline std::tuple<std::string, std::string, int, std::string> parseURL(const std
 inline std::string sendHTTPRequest(const std::string& host, int port, 
                                    const std::string& path,
                                    const std::string& service = "upload-pack") {
-    // Socket banao - network connection ke liye
-    // (Create socket - for network connection)
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        throw std::runtime_error("Socket nahi ban sakda!"
-                               "\n(Socket couldn't be created!)");
+    // HTTPS ke liye curl use karo - SSL support chahida
+    // (Use curl for HTTPS - SSL support needed)
+    
+    std::string protocol = (port == 443) ? "https" : "http";
+    std::string url = protocol + "://" + host + path + "/info/refs?service=git-" + service;
+    
+    // Temp file vich response save karo
+    // (Save response in temp file)
+    std::string temp_file = "/tmp/git_clone_response_" + std::to_string(getpid()) + ".txt";
+    
+    std::string cmd = "curl -s -o \"" + temp_file + "\" \"" + url + "\"";
+    
+    int result = system(cmd.c_str());
+    if (result != 0) {
+        throw std::runtime_error("HTTP request fail - curl command nahi chali!"
+                               "\n(HTTP request failed - curl command didn't run!)");
     }
     
-    // Server address resolve karo
-    // (Resolve server address)
-    struct addrinfo hints, *result;
-    std::memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    
-    int status = getaddrinfo(host.c_str(), std::to_string(port).c_str(), 
-                            &hints, &result);
-    if (status != 0) {
-        close(sock);
-        throw std::runtime_error("Host resolve nahi ho sakda: " + host +
-                               "\n(Host couldn't be resolved: " + host + ")");
+    // Response file paRho
+    // (Read response file)
+    std::ifstream file(temp_file, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Response file nahi khul sakdi!"
+                               "\n(Response file couldn't be opened!)");
     }
     
-    // Connect karo server naal
-    // (Connect to server)
-    if (connect(sock, result->ai_addr, result->ai_addrlen) < 0) {
-        freeaddrinfo(result);
-        close(sock);
-        throw std::runtime_error("Server naal connect nahi ho sakda!"
-                               "\n(Couldn't connect to server!)");
-    }
+    std::string response((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
     
-    freeaddrinfo(result);
+    file.close();
     
-    // HTTP request banao - GET method
-    // (Create HTTP request - GET method)
-    std::stringstream request;
-    request << "GET " << path << "/info/refs?service=git-" << service << " HTTP/1.1\r\n";
-    request << "Host: " << host << "\r\n";
-    request << "User-Agent: git/punjabi-git-cpp\r\n";
-    request << "Accept: */*\r\n";
-    request << "Connection: close\r\n";
-    request << "\r\n";
-    
-    std::string request_str = request.str();
-    
-    // Request bhejo!
-    // (Send request!)
-    if (send(sock, request_str.c_str(), request_str.length(), 0) < 0) {
-        close(sock);
-        throw std::runtime_error("Request nahi bhej sakda!"
-                               "\n(Couldn't send request!)");
-    }
-    
-    // Response receive karo - chunk chunk karke
-    // (Receive response - chunk by chunk)
-    std::string response;
-    char buffer[4096];
-    ssize_t bytes_received;
-    
-    while ((bytes_received = recv(sock, buffer, sizeof(buffer), 0)) > 0) {
-        response.append(buffer, bytes_received);
-    }
-    
-    close(sock);
+    // Temp file delete karo
+    // (Delete temp file)
+    std::filesystem::remove(temp_file);
     
     return response;
 }
 
 /**
- * Pack file parse karne da function (simplified version)
- * (Function to parse pack file - simplified version)
+ * Pack file request karne da function (using curl for HTTPS)
+ * (Function to request pack file using curl for HTTPS)
  * 
- * Note: Full pack file parsing bahut complex hai
- * Eh basic implementation hai for demonstration
- * (Note: Full pack file parsing is very complex
- *  This is basic implementation for demonstration)
+ * POST request bhejta hai git-upload-pack nu
+ * (Sends POST request to git-upload-pack)
+ */
+inline std::string sendPackRequest(const std::string& host, int port,
+                                    const std::string& path,
+                                    const std::vector<std::string>& want_refs) {
+    // Pack request body banao - pkt-line format vich
+    // (Create pack request body - in pkt-line format)
+    std::stringstream body;
+    
+    // Want lines bhejo - jo objects chahide ne
+    // (Send want lines - which objects we need)
+    for (const auto& ref : want_refs) {
+        std::string want_line = "want " + ref + "\n";
+        char len_buf[5];
+        snprintf(len_buf, sizeof(len_buf), "%04x", (int)(want_line.length() + 4));
+        body << len_buf << want_line;
+    }
+    
+    // Flush packet - section khatam
+    // (Flush packet - section end)
+    body << "0000";
+    
+    // Done line bhejo
+    // (Send done line)
+    body << "0009done\n";
+    
+    std::string body_str = body.str();
+    
+    // Temp files ke liye paths
+    // (Paths for temp files)
+    std::string body_file = "/tmp/git_pack_request_" + std::to_string(getpid()) + ".txt";
+    std::string response_file = "/tmp/git_pack_response_" + std::to_string(getpid()) + ".pack";
+    
+    // Request body file vich save karo
+    // (Save request body in file)
+    std::ofstream out(body_file, std::ios::binary);
+    out << body_str;
+    out.close();
+    
+    // URL banao
+    // (Create URL)
+    std::string protocol = (port == 443) ? "https" : "http";
+    std::string url = protocol + "://" + host + path + "/git-upload-pack";
+    
+    // Curl command banao - POST request ke liye
+    // (Create curl command - for POST request)
+    std::string cmd = "curl -s -X POST "
+                     "-H \"Content-Type: application/x-git-upload-pack-request\" "
+                     "-H \"Accept: application/x-git-upload-pack-result\" "
+                     "--data-binary @\"" + body_file + "\" "
+                     "-o \"" + response_file + "\" "
+                     "\"" + url + "\"";
+    
+    int result = system(cmd.c_str());
+    if (result != 0) {
+        std::filesystem::remove(body_file);
+        throw std::runtime_error("Pack request fail - curl command nahi chali!");
+    }
+    
+    // Response paRho
+    // (Read response)
+    std::ifstream file(response_file, std::ios::binary);
+    if (!file) {
+        std::filesystem::remove(body_file);
+        throw std::runtime_error("Pack response file nahi khul sakdi!");
+    }
+    
+    std::string response((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+    
+    file.close();
+    
+    // Temp files delete karo
+    // (Delete temp files)
+    std::filesystem::remove(body_file);
+    std::filesystem::remove(response_file);
+    
+    return response;
+}
+
+/**
+ * Pack file parse karne da function
+ * (Function to parse pack file)
  * 
- * @param pack_data - Pack file data
- * @param target_dir - Target directory for cloning
+ * Pack file vich saare objects hunde ne - compressed format vich
+ * (Pack file contains all objects - in compressed format)
  */
 inline void parsePackFile(const std::string& pack_data, const std::string& target_dir) {
-    // Pack file format:
-    // - Signature: "PACK"
-    // - Version: 4 bytes
-    // - Objects count: 4 bytes
+    // HTTP headers skip karo
+    // (Skip HTTP headers)
+    size_t pack_start = pack_data.find("PACK");
+    if (pack_start == std::string::npos) {
+        std::cerr << "Warning: PACK signature nahi mila!\n";
+        std::cerr << "(Warning: PACK signature not found!)\n";
+        return;
+    }
+    
+    // PACK file format:
+    // - Signature: "PACK" (4 bytes)
+    // - Version: 4 bytes (network byte order)
+    // - Objects count: 4 bytes (network byte order)
     // - Objects: variable length
     
-    std::cerr << "Pack file parsing - advanced feature!\n";
-    std::cerr << "Pack data size: " << pack_data.size() << " bytes\n";
+    const unsigned char* data = reinterpret_cast<const unsigned char*>(pack_data.data() + pack_start);
+    size_t data_len = pack_data.size() - pack_start;
     
-    // Basic implementation - real Git uses complex delta compression
-    // Asli Git bahut complex hai - eh toh trailer hai!
-    // (Real Git is very complex - this is just a preview!)
+    if (data_len < 12) {
+        std::cerr << "Pack file bahut chhoti hai!\n";
+        std::cerr << "(Pack file too small!)\n";
+        return;
+    }
+    
+    // Version paRho
+    // (Read version)
+    uint32_t version = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7];
+    
+    // Object count paRho
+    // (Read object count)
+    uint32_t obj_count = (data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11];
+    
+    std::cerr << "Pack version: " << version << "\n";
+    std::cerr << "Objects count: " << obj_count << "\n";
+    
+    size_t pos = 12; // PACK header ke baad
+                     // (After PACK header)
+    
+    // Har object process karo
+    // (Process each object)
+    for (uint32_t i = 0; i < obj_count && pos < data_len; ++i) {
+        // Object type te size paRho - variable length encoding
+        // (Read object type and size - variable length encoding)
+        
+        unsigned char c = data[pos++];
+        int type = (c >> 4) & 0x7;
+        size_t size = c & 0xF;
+        int shift = 4;
+        
+        while (c & 0x80) {
+            if (pos >= data_len) break;
+            c = data[pos++];
+            size |= ((size_t)(c & 0x7F)) << shift;
+            shift += 7;
+        }
+        
+        // Object types:
+        // 1 = commit, 2 = tree, 3 = blob, 4 = tag
+        // 6 = OFS_DELTA, 7 = REF_DELTA (delta compressed)
+        
+        std::string type_name;
+        switch (type) {
+            case 1: type_name = "commit"; break;
+            case 2: type_name = "tree"; break;
+            case 3: type_name = "blob"; break;
+            case 4: type_name = "tag"; break;
+            case 6: type_name = "ofs_delta"; break;
+            case 7: type_name = "ref_delta"; break;
+            default: type_name = "unknown"; break;
+        }
+        
+        // Compressed data paRho - zlib format vich
+        // (Read compressed data - in zlib format)
+        
+        // Decompression setup
+        z_stream strm;
+        strm.zalloc = Z_NULL;
+        strm.zfree = Z_NULL;
+        strm.opaque = Z_NULL;
+        strm.avail_in = data_len - pos;
+        strm.next_in = const_cast<unsigned char*>(data + pos);
+        
+        if (inflateInit(&strm) != Z_OK) {
+            std::cerr << "Decompression init fail!\n";
+            continue;
+        }
+        
+        // Decompressed data ke liye buffer
+        // (Buffer for decompressed data)
+        std::vector<unsigned char> decompressed;
+        decompressed.reserve(size);
+        
+        unsigned char out_buf[4096];
+        int ret;
+        
+        do {
+            strm.avail_out = sizeof(out_buf);
+            strm.next_out = out_buf;
+            
+            ret = inflate(&strm, Z_NO_FLUSH);
+            
+            if (ret == Z_STREAM_ERROR || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR) {
+                inflateEnd(&strm);
+                break;
+            }
+            
+            size_t have = sizeof(out_buf) - strm.avail_out;
+            decompressed.insert(decompressed.end(), out_buf, out_buf + have);
+            
+        } while (ret != Z_STREAM_END && decompressed.size() < size * 2);
+        
+        size_t compressed_size = strm.total_in;
+        inflateEnd(&strm);
+        
+        // Position update karo
+        // (Update position)
+        pos += compressed_size;
+        
+        // Object create karo - delta nahi hona chahida
+        // (Create object - should not be delta)
+        if (type >= 1 && type <= 4 && !decompressed.empty()) {
+            // Object content - type + space + size + null + data
+            // (Object content - type + space + size + null + data)
+            std::string content = type_name + " " + std::to_string(decompressed.size()) + '\0';
+            content.append(reinterpret_cast<char*>(decompressed.data()), decompressed.size());
+            
+            // SHA-1 calculate karo
+            // (Calculate SHA-1)
+            std::string hash = GitObject::calculateSHA1(content);
+            
+            // Object file vich save karo
+            // (Save in object file)
+            std::string dir = target_dir + "/.git/objects/" + hash.substr(0, 2);
+            std::filesystem::create_directories(dir);
+            
+            std::string filepath = dir + "/" + hash.substr(2);
+            std::ofstream out(filepath, std::ios::binary);
+            
+            // Compressed format vich store karo
+            // (Store in compressed format)
+            std::vector<unsigned char> compressed = GitCompression::compress(content);
+            out.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+            out.close();
+            
+            std::cerr << "Object created: " << hash << " (" << type_name << ")\n";
+        }
+    }
 }
 
 /**
@@ -238,45 +476,106 @@ inline bool clone(const std::string& url, std::string target_dir = "") {
         // (Create target directory)
         std::filesystem::create_directories(target_dir);
         
-        // Target directory vich jao
-        // (Go to target directory)
-        auto original_path = std::filesystem::current_path();
-        std::filesystem::current_path(target_dir);
-        
         // Git repository initialize karo
         // (Initialize Git repository)
-        std::filesystem::create_directories(".git");
-        std::filesystem::create_directories(".git/objects");
-        std::filesystem::create_directories(".git/refs");
+        std::filesystem::create_directories(target_dir + "/.git");
+        std::filesystem::create_directories(target_dir + "/.git/objects");
+        std::filesystem::create_directories(target_dir + "/.git/refs");
         
-        std::ofstream headFile(".git/HEAD");
-        headFile << "ref: refs/heads/main\n";
+        std::ofstream headFile(target_dir + "/.git/HEAD");
+        headFile << "ref: refs/heads/master\n";
         headFile.close();
         
         // Smart HTTP protocol use karke references fetch karo
         // (Fetch references using smart HTTP protocol)
         std::cerr << "Fetching references...\n";
         
-        try {
-            std::string response = sendHTTPRequest(host, port, path);
+        std::string response = sendHTTPRequest(host, port, path);
+        
+        // Pkt-lines parse karo
+        // (Parse pkt-lines)
+        auto lines = parsePktLines(response);
+        
+        std::map<std::string, std::string> refs;
+        std::vector<std::string> want_refs;
+        
+        for (const auto& line : lines) {
+            // Pehli line service advertisement honi chahidi
+            // (First line should be service advertisement)
+            if (line.find("# service=") == 0) {
+                continue;
+            }
             
-            // Response parse karo - refs find karo
-            // (Parse response - find refs)
-            std::cerr << "Received " << response.size() << " bytes\n";
-            
-            // Basic clone complete - files checkout karo
-            // (Basic clone complete - checkout files)
-            std::cout << "Clone complete! (Basic implementation)\n";
-            std::cout << "Note: Full pack file support coming soon!\n";
-            
-        } catch (const std::exception& e) {
-            std::cerr << "Network error: " << e.what() << "\n";
-            std::cerr << "Clone basic structure created.\n";
+            // Ref line format: <hash> <ref-name>
+            size_t space_pos = line.find(' ');
+            if (space_pos != std::string::npos && space_pos == 40) {
+                std::string hash = line.substr(0, 40);
+                std::string ref_name = line.substr(41);
+                
+                // Null bytes te capabilities hatao
+                // (Remove null bytes and capabilities)
+                size_t null_pos = ref_name.find('\0');
+                if (null_pos != std::string::npos) {
+                    ref_name = ref_name.substr(0, null_pos);
+                }
+                
+                // Newline hatao
+                // (Remove newline)
+                if (!ref_name.empty() && ref_name.back() == '\n') {
+                    ref_name.pop_back();
+                }
+                
+                refs[ref_name] = hash;
+                want_refs.push_back(hash);
+                
+                std::cerr << "Ref: " << ref_name << " -> " << hash << "\n";
+            }
         }
         
-        // Original directory vich wapas jao
-        // (Go back to original directory)
-        std::filesystem::current_path(original_path);
+        if (want_refs.empty()) {
+            std::cerr << "Warning: Koi refs nahi mile!\n";
+            std::cerr << "(Warning: No refs found!)\n";
+            return false;
+        }
+        
+        // Pack file fetch karo
+        // (Fetch pack file)
+        std::cerr << "Fetching pack file...\n";
+        
+        std::string pack_response = sendPackRequest(host, port, path, want_refs);
+        
+        // Pack file parse karo te objects create karo
+        // (Parse pack file and create objects)
+        std::cerr << "Parsing pack file...\n";
+        parsePackFile(pack_response, target_dir);
+        
+        // HEAD ref update karo
+        // (Update HEAD ref)
+        if (refs.count("refs/heads/master")) {
+            std::string master_hash = refs["refs/heads/master"];
+            std::filesystem::create_directories(target_dir + "/.git/refs/heads");
+            std::ofstream master_file(target_dir + "/.git/refs/heads/master");
+            master_file << master_hash << "\n";
+            master_file.close();
+            
+            std::cerr << "HEAD set to: " << master_hash << "\n";
+        } else if (refs.count("refs/heads/main")) {
+            std::string main_hash = refs["refs/heads/main"];
+            std::filesystem::create_directories(target_dir + "/.git/refs/heads");
+            std::ofstream main_file(target_dir + "/.git/refs/heads/main");
+            main_file << main_hash << "\n";
+            main_file.close();
+            
+            // HEAD update karo main te point karne ke liye
+            // (Update HEAD to point to main)
+            std::ofstream head_file(target_dir + "/.git/HEAD");
+            head_file << "ref: refs/heads/main\n";
+            head_file.close();
+            
+            std::cerr << "HEAD set to: " << main_hash << "\n";
+        }
+        
+        std::cout << "Clone complete!\n";
         
         return true;
         
