@@ -326,6 +326,8 @@ inline void parsePackFile(const std::string& pack_data, const std::string& targe
         // Object type te size paRho - variable length encoding
         // (Read object type and size - variable length encoding)
         
+        if (pos >= data_len) break;
+        
         unsigned char c = data[pos++];
         int type = (c >> 4) & 0x7;
         size_t size = c & 0xF;
@@ -353,6 +355,13 @@ inline void parsePackFile(const std::string& pack_data, const std::string& targe
             default: type_name = "unknown"; break;
         }
         
+        // REF_DELTA ke liye base object hash skip karo
+        // (For REF_DELTA skip base object hash)
+        if (type == 7) {
+            pos += 20; // 20 bytes SHA-1
+            if (pos > data_len) break;
+        }
+        
         // Compressed data paRho - zlib format vich
         // (Read compressed data - in zlib format)
         
@@ -372,7 +381,11 @@ inline void parsePackFile(const std::string& pack_data, const std::string& targe
         // Decompressed data ke liye buffer
         // (Buffer for decompressed data)
         std::vector<unsigned char> decompressed;
-        decompressed.reserve(size);
+        
+        // Size limit lagao - safety ke liye
+        // (Put size limit - for safety)
+        size_t max_size = std::min(size * 10, (size_t)10 * 1024 * 1024); // Max 10MB
+        decompressed.reserve(std::min(size, max_size));
         
         unsigned char out_buf[4096];
         int ret;
@@ -389,9 +402,18 @@ inline void parsePackFile(const std::string& pack_data, const std::string& targe
             }
             
             size_t have = sizeof(out_buf) - strm.avail_out;
+            
+            // Size limit check karo
+            // (Check size limit)
+            if (decompressed.size() + have > max_size) {
+                std::cerr << "Warning: Object too large, skipping!\n";
+                inflateEnd(&strm);
+                break;
+            }
+            
             decompressed.insert(decompressed.end(), out_buf, out_buf + have);
             
-        } while (ret != Z_STREAM_END && decompressed.size() < size * 2);
+        } while (ret != Z_STREAM_END && decompressed.size() < max_size);
         
         size_t compressed_size = strm.total_in;
         inflateEnd(&strm);
@@ -403,30 +425,38 @@ inline void parsePackFile(const std::string& pack_data, const std::string& targe
         // Object create karo - delta nahi hona chahida
         // (Create object - should not be delta)
         if (type >= 1 && type <= 4 && !decompressed.empty()) {
-            // Object content - type + space + size + null + data
-            // (Object content - type + space + size + null + data)
-            std::string content = type_name + " " + std::to_string(decompressed.size()) + '\0';
-            content.append(reinterpret_cast<char*>(decompressed.data()), decompressed.size());
-            
-            // SHA-1 calculate karo
-            // (Calculate SHA-1)
-            std::string hash = GitObject::calculateSHA1(content);
-            
-            // Object file vich save karo
-            // (Save in object file)
-            std::string dir = target_dir + "/.git/objects/" + hash.substr(0, 2);
-            std::filesystem::create_directories(dir);
-            
-            std::string filepath = dir + "/" + hash.substr(2);
-            std::ofstream out(filepath, std::ios::binary);
-            
-            // Compressed format vich store karo
-            // (Store in compressed format)
-            std::vector<unsigned char> compressed = GitCompression::compress(content);
-            out.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
-            out.close();
-            
-            std::cerr << "Object created: " << hash << " (" << type_name << ")\n";
+            try {
+                // Object content - type + space + size + null + data
+                // (Object content - type + space + size + null + data)
+                std::string content = type_name + " " + std::to_string(decompressed.size()) + '\0';
+                content.append(reinterpret_cast<char*>(decompressed.data()), decompressed.size());
+                
+                // SHA-1 calculate karo
+                // (Calculate SHA-1)
+                std::string hash = GitObject::calculateSHA1(content);
+                
+                // Object file vich save karo
+                // (Save in object file)
+                std::string dir = target_dir + "/.git/objects/" + hash.substr(0, 2);
+                std::filesystem::create_directories(dir);
+                
+                std::string filepath = dir + "/" + hash.substr(2);
+                std::ofstream out(filepath, std::ios::binary);
+                
+                // Compressed format vich store karo
+                // (Store in compressed format)
+                std::vector<unsigned char> compressed = GitCompression::compress(content);
+                out.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+                out.close();
+                
+                std::cerr << "Object created: " << hash << " (" << type_name << ")\n";
+            } catch (const std::exception& e) {
+                std::cerr << "Error creating object: " << e.what() << "\n";
+            }
+        } else if (type == 6 || type == 7) {
+            // Delta objects skip kar do - advanced feature
+            // (Skip delta objects - advanced feature)
+            std::cerr << "Skipping delta object (type " << type << ")\n";
         }
     }
 }
