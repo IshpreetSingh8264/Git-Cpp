@@ -432,6 +432,150 @@ inline void parsePackFile(const std::string& pack_data, const std::string& targe
 }
 
 /**
+ * Tree recursively checkout karne da helper function (forward declaration)
+ * (Helper function to recursively checkout tree - forward declaration)
+ */
+inline void checkoutTree(const std::string& tree_hash, const std::string& path);
+
+/**
+ * Working tree checkout karne da function
+ * (Function to checkout working tree)
+ * 
+ * Commit object ton tree extract kar ke working directory vich files banao
+ * (Extract tree from commit object and create files in working directory)
+ */
+inline void checkoutWorkingTree(const std::string& commit_hash, const std::string& target_dir) {
+    try {
+        // Commit object paRho
+        // (Read commit object)
+        std::string full_content = GitObject::readObject(commit_hash);
+        
+        // Header parse karo - "type size\0" format
+        // (Parse header - "type size\0" format)
+        size_t null_pos = full_content.find('\0');
+        if (null_pos == std::string::npos) {
+            std::cerr << "Warning: Invalid object format!\n";
+            return;
+        }
+        
+        std::string header = full_content.substr(0, null_pos);
+        std::string content = full_content.substr(null_pos + 1);
+        
+        size_t space_pos = header.find(' ');
+        std::string type = header.substr(0, space_pos);
+        
+        if (type != "commit") {
+            std::cerr << "Warning: Not a commit object!\n";
+            return;
+        }
+        
+        // Tree hash find karo commit vichon
+        // (Find tree hash from commit)
+        std::istringstream iss(content);
+        std::string line;
+        std::string tree_hash;
+        
+        while (std::getline(iss, line)) {
+            if (line.starts_with("tree ")) {
+                tree_hash = line.substr(5);
+                break;
+            }
+        }
+        
+        if (tree_hash.empty()) {
+            std::cerr << "Warning: No tree found in commit!\n";
+            return;
+        }
+        
+        std::cerr << "Checking out tree: " << tree_hash << "\n";
+        
+        // Tree recursively checkout karo
+        // (Recursively checkout tree)
+        checkoutTree(tree_hash, target_dir);
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Checkout error: " << e.what() << "\n";
+    }
+}
+
+/**
+ * Tree recursively checkout karne da helper function
+ * (Helper function to recursively checkout tree)
+ */
+inline void checkoutTree(const std::string& tree_hash, const std::string& path) {
+    // Tree object paRho
+    // (Read tree object)
+    std::string full_content = GitObject::readObject(tree_hash);
+    
+    // Header parse karo
+    // (Parse header)
+    size_t null_pos = full_content.find('\0');
+    if (null_pos == std::string::npos) {
+        std::cerr << "Warning: Invalid object format!\n";
+        return;
+    }
+    
+    std::string header = full_content.substr(0, null_pos);
+    std::string content = full_content.substr(null_pos + 1);
+    
+    size_t space_pos = header.find(' ');
+    std::string type = header.substr(0, space_pos);
+    
+    if (type != "tree") {
+        std::cerr << "Warning: Not a tree object: " << tree_hash << "\n";
+        return;
+    }
+    
+    // Tree parse karo
+    // (Parse tree)
+    auto entries = GitTree::parseTree(content);
+    
+    // Har entry process karo
+    // (Process each entry)
+    for (const auto& entry : entries) {
+        std::string entry_path = path + "/" + entry.name;
+        
+        if (entry.mode == "40000" || entry.mode == "040000") {
+            // Directory hai - recursively checkout karo
+            // (It's a directory - checkout recursively)
+            std::filesystem::create_directories(entry_path);
+            checkoutTree(entry.hash, entry_path);
+        } else {
+            // File hai - create karo
+            // (It's a file - create it)
+            std::string obj_full_content = GitObject::readObject(entry.hash);
+            
+            // Header parse karo
+            // (Parse header)
+            size_t obj_null_pos = obj_full_content.find('\0');
+            if (obj_null_pos != std::string::npos) {
+                std::string obj_header = obj_full_content.substr(0, obj_null_pos);
+                std::string obj_content = obj_full_content.substr(obj_null_pos + 1);
+                
+                size_t obj_space_pos = obj_header.find(' ');
+                std::string obj_type = obj_header.substr(0, obj_space_pos);
+                
+                if (obj_type == "blob") {
+                    std::ofstream file(entry_path, std::ios::binary);
+                    file << obj_content;
+                    file.close();
+                    
+                    // Executable permissions set karo agar chahide
+                    // (Set executable permissions if needed)
+                    if (entry.mode == "100755") {
+                        std::filesystem::permissions(entry_path,
+                            std::filesystem::perms::owner_exec |
+                            std::filesystem::perms::group_exec |
+                            std::filesystem::perms::others_exec,
+                            std::filesystem::perm_options::add);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * Repository clone karne da main function
  * (Main function to clone repository)
  * 
@@ -551,6 +695,7 @@ inline bool clone(const std::string& url, std::string target_dir = "") {
         
         // HEAD ref update karo
         // (Update HEAD ref)
+        std::string head_commit;
         if (refs.count("refs/heads/master")) {
             std::string master_hash = refs["refs/heads/master"];
             std::filesystem::create_directories(target_dir + "/.git/refs/heads");
@@ -558,6 +703,7 @@ inline bool clone(const std::string& url, std::string target_dir = "") {
             master_file << master_hash << "\n";
             master_file.close();
             
+            head_commit = master_hash;
             std::cerr << "HEAD set to: " << master_hash << "\n";
         } else if (refs.count("refs/heads/main")) {
             std::string main_hash = refs["refs/heads/main"];
@@ -572,7 +718,28 @@ inline bool clone(const std::string& url, std::string target_dir = "") {
             head_file << "ref: refs/heads/main\n";
             head_file.close();
             
+            head_commit = main_hash;
             std::cerr << "HEAD set to: " << main_hash << "\n";
+        }
+        
+        // Working tree checkout karo
+        // (Checkout working tree)
+        if (!head_commit.empty()) {
+            std::cerr << "Checking out files...\n";
+            
+            // Current directory save karo
+            // (Save current directory)
+            auto original_path = std::filesystem::current_path();
+            
+            // Target directory vich jao
+            // (Go to target directory)
+            std::filesystem::current_path(target_dir);
+            
+            checkoutWorkingTree(head_commit, ".");
+            
+            // Wapas original directory vich jao
+            // (Go back to original directory)
+            std::filesystem::current_path(original_path);
         }
         
         std::cout << "Clone complete!\n";
