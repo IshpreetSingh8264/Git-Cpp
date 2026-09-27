@@ -62,10 +62,48 @@ std::vector<std::string> uniqueMissing(const std::vector<std::string>& hashes) {
     return out;
 }
 
+// Har advertised branch te tag da ref likh de
+// (Write a ref for every advertised branch and tag)
+void writeAllRefs(const std::filesystem::path& root, const RefAdvertisement& advertisement) {
+    size_t written = 0;
+    size_t skipped = 0;
+    for (const auto& ref : advertisement.refs) {
+        // "HEAD" sirf ik pseudo-ref hai, usda alag file nahi hunda
+        // ("HEAD" is only a pseudo-ref, it gets no file of its own)
+        if (ref.name == "HEAD" || ref.name.rfind("refs/", 0) != 0) {
+            ++skipped;
+            continue;
+        }
+
+        // "refs/tags/v1.2^{}" eh peeled tag da signal hai, ref nahi. Iko
+        // likhne te git usda naam hi reject kar dinda hai
+        // ("refs/tags/v1.2^{}" marks a peeled tag rather than being a ref.
+        //  Writing it produces a name real git rejects)
+        if (ref.name.size() > 3 && ref.name.compare(ref.name.size() - 3, 3, "^{}") == 0) {
+            ++skipped;
+            continue;
+        }
+
+        std::filesystem::path refPath = GitRepository::getRefsDir(root) /
+                                         ref.name.substr(std::string("refs/").size());
+        std::filesystem::create_directories(refPath.parent_path());
+
+        std::ofstream refFile(refPath, std::ios::binary | std::ios::trunc);
+        if (!refFile) {
+            throw GitError::GitError("Ref likh nahi sakdi: " + refPath.string());
+        }
+        refFile << ref.hash << "\n";
+        ++written;
+    }
+    std::cerr << "Refs written: " << written << (skipped > 0 ? " (" + std::to_string(skipped) +
+                                                               " pseudo-ref skipped)"
+                                                         : "")
+              << "\n";
+}
+
 // Default branch da ref likh de, te HEAD oh di taraf point karwa de
 // (Write the default branch's ref and point HEAD at it)
-void writeHead(const std::filesystem::path& root,
-               const RefAdvertisement& advertisement) {
+void writeHead(const std::filesystem::path& root, const RefAdvertisement& advertisement) {
     if (advertisement.defaultBranch.empty() || advertisement.defaultBranchHash().empty()) {
         throw GitError::GitError(
             "Server te koi branch nahi mili - khali repository hai ya asaan nahi padhi ja sakdi. "
@@ -74,15 +112,6 @@ void writeHead(const std::filesystem::path& root,
 
     std::string branch = advertisement.defaultBranchName();
     std::string hash = advertisement.defaultBranchHash();
-
-    std::filesystem::path refPath = GitRepository::getRefsDir(root) / "heads" / branch;
-    std::filesystem::create_directories(refPath.parent_path());
-
-    std::ofstream refFile(refPath, std::ios::binary | std::ios::trunc);
-    if (!refFile) {
-        throw GitError::GitError("Ref likh nahi sakdi: " + refPath.string());
-    }
-    refFile << hash << "\n";
 
     std::ofstream headFile(root / ".git" / "HEAD", std::ios::binary | std::ios::trunc);
     if (!headFile) {
@@ -161,7 +190,8 @@ bool clone(const std::string& url, std::string targetDir) {
             throw GitError::GitError(message.str());
         }
 
-        // --- 3. HEAD te branch ---
+        // --- 3. refs te HEAD ---
+        writeAllRefs(targetDir, advertisement);
         writeHead(targetDir, advertisement);
 
         // --- 4. working tree ---
