@@ -21,6 +21,16 @@ std::string schemeFor(int port) {
     return port == 443 ? "https" : "http";
 }
 
+// "github.com" ya "127.0.0.1:8099" - scheme da default port chhad dein
+// ("github.com" or "127.0.0.1:8099" - the scheme's default port is left off)
+std::string authorityFor(const Endpoint& endpoint) {
+    const int defaultPort = (endpoint.scheme == "https") ? 443 : 80;
+    if (endpoint.port == defaultPort) {
+        return endpoint.host;
+    }
+    return endpoint.host + ":" + std::to_string(endpoint.port);
+}
+
 /**
  * Curl chalao te usda output padh lo
  * (Run curl and read its output)
@@ -117,7 +127,7 @@ std::string buildUploadPackRequest(const std::vector<std::string>& wantHashes,
 }
 
 std::string fetchRefAdvertisement(const Endpoint& endpoint) {
-    std::string url = schemeFor(endpoint.port) + "://" + endpoint.host + endpoint.path +
+    std::string url = schemeFor(endpoint.port) + "://" + authorityFor(endpoint) + endpoint.path +
                       "/info/refs?service=git-upload-pack";
 
     return runCurl({url});
@@ -131,8 +141,8 @@ std::string fetchPack(const Endpoint& endpoint,
     GitUtil::TempFile body(".req");
     body.write(buildUploadPackRequest(wantHashes, haveHashes));
 
-    std::string url = schemeFor(endpoint.port) + "://" + endpoint.host + endpoint.path +
-                      "/git-upload-pack";
+    std::string url =
+        schemeFor(endpoint.port) + "://" + authorityFor(endpoint) + endpoint.path + "/git-upload-pack";
 
     return runCurl({"-X",
                     "POST",
