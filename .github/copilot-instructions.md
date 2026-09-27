@@ -199,23 +199,25 @@ those hashes with `have` lines — that is the thin-pack path.
 ## Tests
 
 `codecrafters test` builds and runs all 7 stages; it is the gate for any change.
-Locally:
+Locally, from a clean checkout:
 
 ```sh
-cmake -B build -S . && cmake --build ./build
-mkdir -p /tmp/testing && cd /tmp/testing && /path/to/repo/build/git init
+./tests/run.sh
 ```
 
-Do not run `init` inside this repository — it writes `.git` in the working
-directory.
+That builds and runs 45 assertions with no network. `ctest --test-dir build`
+works too. **Read `tests/README.md` first** — it documents what these suites
+deliberately do not cover, including the one gap that matters most (the
+thin-pack follow-up fetch is not exercised end to end).
 
-Behaviour that the 7 stages do not cover, and how it was checked:
-
-| Behaviour | How |
+| Suite | Covers |
 |---|---|
-| OFS_DELTA, REF_DELTA on an in-pack base, REF_DELTA on a store-only base, and an unresolvable base | synthetic pack with a known manifest, run through `GitPack::PackReader` |
-| A missing blob fails loudly and writes no file | a tree pointing at a hash that was never stored, run through `GitWorktree::checkoutCommit` |
-| A real delta-heavy clone | `pallets/click`: 13020 raw + 18638 deltas, all resolved, `diff -r` against a real `git clone` is empty, `git fsck` is clean |
+| `tests/unit/` | OFS_DELTA, REF_DELTA on an in-pack base, REF_DELTA on a store-only base, and an unresolvable base, against a synthetic pack with a known manifest |
+| `tests/integration/` | a real clone over smart HTTP of a repo whose `HEAD` is `refs/heads/trunk` — neither `main` nor `master`, which the course fixture never exercises |
+
+Do not run `init` inside this repository — it writes `.git` in the working
+directory. `test.sh` in the repo root is an interactive demo, not a gate: it
+exits 0 even when a test fails.
 
 ## Do not "improve" these
 
