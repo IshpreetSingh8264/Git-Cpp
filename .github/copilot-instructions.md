@@ -136,8 +136,8 @@ GitClone::clone
 ## Conventions
 
 - **Every header that declares behaviour has a `.cpp`.** Headers are contract
-  only. `utils/error.hpp` and `commands/handlers.hpp` are the two deliberate
-  exceptions: pure declarations, nothing to link.
+  only, and the one exception is `utils/error.hpp`, which declares a class and
+  nothing else, so there is nothing to link.
 - **Every layer returns values or throws `GitError::GitError`.** No `exit()`
   outside `commands/` (only `clone_command.cpp` calls it, so `clone` can set a
   failure exit code), no silent `catch` that swallows a decode error.
