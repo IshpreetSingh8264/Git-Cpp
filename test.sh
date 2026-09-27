@@ -24,7 +24,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 GIT_BIN="$SCRIPT_DIR/build/git"
 
 # Check if git binary exists
-if [ ! -f ""$GIT_BIN"" ]; then
+if [ ! -f "$GIT_BIN" ]; then
     echo -e "${RED}❌ Git binary not found! Build karo pehle!${NC}"
     echo -e "${RED}   (Git binary not found! Build first!)${NC}"
     echo ""
@@ -43,7 +43,7 @@ echo ""
 
 # Test 1: Initialize repository
 echo -e "${BLUE}Test 1: Repository Initialization${NC}"
-""$GIT_BIN"" init
+"$GIT_BIN" init
 if [ -d ".git" ]; then
     echo -e "${GREEN}✅ Repository initialized${NC}"
 else
