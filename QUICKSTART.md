@@ -1,8 +1,13 @@
-# 🎊 CONGRATULATIONS! YOUR GIT IMPLEMENTATION IS COMPLETE!
+# 🚀 Quick start
 
-## ✨ What Has Been Built
+## ✨ What this is
 
-You now have a **COMPLETE, WORKING GIT IMPLEMENTATION** in C++ with hilarious Pinglish comments!
+A from-scratch Git implementation in C++ that passes all **7** CodeCrafters Git
+stages. It can create and read objects, write trees, build commits, and clone a
+public repository. It is not a general-purpose `git` — there is no `checkout`
+command, no `commit` command, no staging area, and no `merge`/`rebase`/`diff`.
+The full scope is in
+[`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
 ---
 
@@ -11,22 +16,23 @@ You now have a **COMPLETE, WORKING GIT IMPLEMENTATION** in C++ with hilarious Pi
 ```
 codecrafters-git-cpp/
 │
-├── src/                          # Source code - All modules
-│   ├── main.cpp                  # CLI interface & command routing
-│   ├── Compression.hpp           # zlib compression/decompression
-│   ├── GitObject.hpp             # Object database (SHA-1, storage)
-│   ├── Repository.hpp            # Repository initialization
-│   ├── Tree.hpp                  # Tree object operations
-│   ├── Commit.hpp                # Commit creation
-│   └── Clone.hpp                 # Remote cloning (basic HTTP)
+├── src/                          # Source code
+│   ├── main.cpp                  # argv → dispatcher, 27 lines
+│   ├── commands/                 # command registry + one file per command
+│   ├── clone/                    # pkt-line, refs, http, pack, delta, worktree
+│   ├── commit/                   # commit objects + author identity
+│   ├── tree/                     # tree parse / serialize / print / write
+│   ├── objects/                  # loose object store + zlib
+│   ├── repository/               # the .git layout
+│   └── utils/                    # leaf helpers (varint, temp file, process)
 │
 ├── build/                        # Compiled binaries
-│   └── git                       # Main executable ✅
+│   └── git                       # Main executable
 │
 ├── Documentation Files
-│   ├── DOCUMENTATION.md          # Technical guide (47KB!)
+│   ├── .github/copilot-instructions.md  # architecture, data flow, conventions
+│   ├── DOCUMENTATION.md          # Technical guide
 │   ├── PROJECT_README.md         # User guide
-│   ├── SUMMARY.md                # Test results & stats
 │   └── QUICKSTART.md             # This file
 │
 ├── Build Configuration
@@ -105,8 +111,8 @@ export GIT_AUTHOR_EMAIL="you@example.com"
 
 ## 📚 Documentation Files
 
-### 1. **DOCUMENTATION.md** (47KB - Comprehensive Guide)
-   - Complete architecture overview
+### 1. **DOCUMENTATION.md** (Git format reference)
+   - Architecture overview
    - Every module explained in detail
    - Git concepts from scratch
    - How Git actually works internally
@@ -121,13 +127,7 @@ export GIT_AUTHOR_EMAIL="you@example.com"
    - Pro tips
    - Contributing guidelines
 
-### 3. **SUMMARY.md** (Test Results)
-   - All test results
-   - Code statistics
-   - Feature completion status
-   - Achievements summary
-
-### 4. **Inline Code Comments**
+### 3. **Inline Code Comments**
    - Every function documented
    - Pinglish + English explanations
    - Technical details
@@ -151,10 +151,10 @@ Every function has bilingual humor:
 ```
 
 ### 2. Modular Architecture
-- Each module = one responsibility
-- Clean namespace isolation
-- Header-only implementation
-- Easy to understand and extend
+- Each directory is one layer, and calls only downward
+- One namespace per module
+- Every header that declares behaviour has a matching `.cpp`
+- Command dispatch is a registry, not an if/else chain
 
 ### 3. Modern C++23
 - `std::filesystem` for paths
@@ -162,20 +162,21 @@ Every function has bilingual humor:
 - `std::tuple` for returns
 - Type-safe design
 
-### 4. Complete Error Handling
-Bilingual error messages:
+### 4. Loud Error Handling
+Errors are thrown as `GitError::GitError` and printed by the dispatcher, which
+sets a non-zero exit code. Nothing is faked to make a run look successful:
 ```cpp
-throw std::runtime_error(
-    "Arre bapu! Object nahi mila!\n"
-    "(Oh father! Object not found!)"
-);
+throw GitError::GitError("Object nahi mila: " + hash);
 ```
 
 ---
 
 ## ✅ Verification
 
-All features tested and working:
+The 7 course stages are the gate, and they pass:
+```sh
+codecrafters test   # 7/7
+```
 
 ```bash
 ✅ Repository initialization
@@ -213,7 +214,7 @@ By studying this codebase, you now understand:
 3. **C++ Programming**
    - Modern C++23 features
    - Modular design patterns
-   - Header-only libraries
+   - Splitting headers from translation units
    - Namespace organization
 
 4. **System Programming**
@@ -230,9 +231,9 @@ By studying this codebase, you now understand:
 
 ---
 
-## 🏆 CodeCrafters Challenge - COMPLETE!
+## 🏆 CodeCrafters Challenge
 
-All stages passed:
+All 7 stages of the course pass:
 1. ✅ Repository Setup
 2. ✅ Initialize .git directory
 3. ✅ Read blob object

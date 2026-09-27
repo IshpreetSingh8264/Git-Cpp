@@ -1,8 +1,13 @@
-# 🚀 Punjabi Git - Complete Git Implementation in C++
+# 🚀 Punjabi Git - a from-scratch Git implementation in C++
 
 **Wadhaiya ji! (Congratulations!)** You've found the most swaggy Git implementation in C++!
 
-This is a complete, modular Git implementation built for the CodeCrafters Git challenge. Every line is documented with hilarious Pinglish (Punjabi + English) comments that make learning Git internals fun!
+This is a Git implementation built for the CodeCrafters Git challenge, which is
+7 stages long and all 7 pass. Every function carries a Pinglish (Punjabi +
+English) comment, because reading Git's on-disk formats is more fun when the
+code explains itself. For the architecture — layers, data flow, conventions and
+the list of things this deliberately does not do — see
+[`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
 ---
 
@@ -50,28 +55,29 @@ The codebase is organized into clean, focused modules:
 
 ```
 src/
-├── main.cpp           # Command routing and CLI interface
-├── Compression.hpp    # zlib compression/decompression
-├── GitObject.hpp      # Object database (blob, tree, commit)
-├── Repository.hpp     # Repository initialization and management
-├── Tree.hpp           # Tree object parsing and creation
-├── Commit.hpp         # Commit object creation
-└── Clone.hpp          # Remote repository cloning
+├── main.cpp     # argv → dispatcher, 27 lines
+├── commands/    # command registry + one file per command
+├── clone/       # pkt-line, ref advertisement, http, pack, delta, worktree
+├── commit/      # commit objects + author identity
+├── tree/        # tree parse / serialize / print / write
+├── objects/     # loose object store + zlib
+├── repository/  # the .git layout
+└── utils/       # leaf helpers: error, varint, temp file, process
 ```
 
 ### Design Principles
 
-1. **Single Responsibility** - Each module has one clear purpose
-2. **Header-Only** - All implementations in headers for simplicity
-3. **Namespace Isolation** - Each module in its own namespace
-4. **Error Handling** - Exceptions with bilingual error messages
-5. **Type Safety** - Modern C++23 features
+1. **Layers point downward** - `commands → clone → commit/tree/objects/repository → utils`, never back up
+2. **One concept per file** - every header that declares behaviour has a matching `.cpp`
+3. **Namespace isolation** - one namespace per module, named after its directory
+4. **Loud errors** - `GitError::GitError` on anything that definitely failed, never a quiet empty result
+5. **Type safety** - modern C++23, and the sizes in Git's formats are `uint64_t` all the way
 
 ---
 
 ## 📖 Modules Documentation
 
-### 1. Compression.hpp
+### 1. `objects/compression.{hpp,cpp}` — zlib
 
 **Purpose:** Handle zlib compression and decompression for Git objects
 
@@ -105,7 +111,7 @@ src/
 
 ---
 
-### 2. GitObject.hpp
+### 2. `objects/object_store.{hpp,cpp}` — the object database
 
 **Purpose:** Core object database operations - the heart of Git!
 
@@ -170,7 +176,7 @@ src/
 
 ---
 
-### 3. Repository.hpp
+### 3. `repository/repository.{hpp,cpp}` — the .git layout
 
 **Purpose:** Git repository initialization and management
 
@@ -225,7 +231,7 @@ src/
 
 ---
 
-### 4. Tree.hpp
+### 4. `tree/tree_object.{hpp,cpp}` — trees
 
 **Purpose:** Directory structure representation using tree objects
 
@@ -308,7 +314,7 @@ Tree Object Format:
 
 ---
 
-### 5. Commit.hpp
+### 5. `commit/commit_object.{hpp,cpp}` and `commit/identity.{hpp,cpp}`
 
 **Purpose:** Create commit objects - snapshots with history!
 
@@ -385,7 +391,7 @@ Initial commit - Pehli baar!
 
 ---
 
-### 6. Clone.hpp
+### 6. `clone/` — pkt_line, ref_advertisement, http_transport, delta_applier, pack_reader, worktree_writer, clone_operation
 
 **Purpose:** Clone remote Git repositories
 
@@ -893,7 +899,8 @@ Want to contribute? Here are ideas:
 - [ ] **Branches** - Creating and switching branches
 - [ ] **Merge** - Combining branches
 - [ ] **Diff** - Showing changes between commits
-- [ ] **Pack files** - Full pack file parsing with delta compression
+- [x] **Pack files** - pack parsing with OFS_DELTA/REF_DELTA resolution (done)
+- [ ] **Pack writing** - `repack`/`gc`
 - [ ] **Index (staging area)** - The `.git/index` file
 - [ ] **Remote tracking** - Fetch, pull, push
 - [ ] **Tags** - Named commits

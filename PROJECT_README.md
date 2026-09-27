@@ -6,23 +6,32 @@
 
 **Wadhaiya ji!** Welcome to the most hilarious Git implementation you'll ever read! 🎉
 
-This is a complete Git implementation in C++ with **Pinglish (Punjabi + English)** comments that make learning Git internals actually fun!
+This is a from-scratch Git implementation in C++ with **Pinglish (Punjabi +
+English)** comments that make learning Git internals actually fun!
+
+**Scope, plainly:** the CodeCrafters Git course is 7 stages and this passes all
+7. That means it can create and read objects, write trees, build commits, and
+clone a public repository. It is **not** a general-purpose `git`: there is no
+`checkout` command, no `commit` command, no `add`/staging area, no `.git/index`,
+no `merge`/`rebase`/`diff`, no `fetch`/`push`, and no pack writing. See
+["What this is not"](.github/copilot-instructions.md#what-this-is-and-what-it-is-not)
+for the full list.
 
 ## 🎯 Features
 
-✅ **Full Git Functionality:**
+✅ **The 7 course stages, working:**
 - Repository initialization
 - Blob objects (file storage)
 - Tree objects (directory structure)
 - Commit objects (history)
-- Clone (basic HTTP support)
+- Clone over smart HTTP, including pack delta resolution
 - Content-addressable storage with SHA-1
 - zlib compression
 
 ✅ **Modular Architecture:**
-- Clean separation of concerns
-- Header-only implementation
-- Namespace isolation
+- Layered directories, one namespace per module
+- Every header has a matching `.cpp`
+- Command dispatch is a registry, not an if/else chain
 - Modern C++23
 
 ✅ **Hilarious Comments:**
@@ -35,18 +44,21 @@ Every function has:
 
 ```
 src/
-├── main.cpp           # Command routing and CLI
-├── Compression.hpp    # zlib compression/decompression
-├── GitObject.hpp      # Object database (blob, tree, commit)
-├── Repository.hpp     # Repository initialization
-├── Tree.hpp           # Tree object handling
-├── Commit.hpp         # Commit creation
-└── Clone.hpp          # Remote cloning
+├── main.cpp            # argv → dispatcher, 27 lines
+├── commands/           # command registry + one file per command
+├── clone/              # pkt-line, ref advertisement, http, pack, delta,
+│                       #   worktree, orchestration
+├── commit/             # commit objects + author identity
+├── tree/               # tree parse / serialize / print / write
+├── objects/            # loose object store + zlib
+├── repository/         # the .git layout
+└── utils/              # leaf helpers: error, varint, temp file, process
 
-DOCUMENTATION.md       # Full technical documentation (47KB!)
-README.md             # This file
-CMakeLists.txt        # Build configuration
-your_program.sh       # Run script
+.github/copilot-instructions.md   # architecture: layers, data flow, conventions
+DOCUMENTATION.md       # Git format reference and tutorials
+README.md              # the CodeCrafters starting-point readme
+CMakeLists.txt         # build configuration
+your_program.sh        # run script (needs VCPKG_ROOT set, like on CodeCrafters)
 ```
 
 ## 🚀 Quick Start
@@ -122,8 +134,10 @@ echo "Hello, Git!" > test.txt
 ## 🎓 Learning Resources
 
 ### Start Here:
-1. **[DOCUMENTATION.md](DOCUMENTATION.md)** - Complete guide with examples
-   - Architecture overview
+1. **[.github/copilot-instructions.md](.github/copilot-instructions.md)** —
+   the architecture: layer rules, data flow, conventions, a recipe for adding a
+   command, and the list of things not to "fix"
+2. **[DOCUMENTATION.md](DOCUMENTATION.md)** — Git format reference and tutorials
    - Module documentation
    - Git concepts explained
    - Step-by-step tutorials
@@ -266,7 +280,7 @@ This is an educational project! Feel free to:
 
 ## 🎯 CodeCrafters Challenge
 
-This project completes all CodeCrafters Git stages:
+This project passes all 7 CodeCrafters Git stages:
 1. ✅ Repository Setup
 2. ✅ Initialize .git directory
 3. ✅ Read blob object
@@ -295,7 +309,7 @@ Want to extend this? Consider adding:
 - [ ] Branches and switching
 - [ ] Merge operations
 - [ ] Diff algorithm
-- [ ] Full pack file support
+- [ ] Pack writing / `gc` / `repack`
 - [ ] Index/staging area
 - [ ] Remote operations (fetch, pull, push)
 - [ ] Tags
